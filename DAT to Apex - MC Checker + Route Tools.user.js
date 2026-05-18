@@ -9,6 +9,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        window.focus
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20to%20Apex%20-%20MC%20Checker%20%2B%20Route%20Tools.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20to%20Apex%20-%20MC%20Checker%20%2B%20Route%20Tools.user.js
 // ==/UserScript==
 
 (function () {
