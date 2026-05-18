@@ -6,6 +6,8 @@
 // @match        https://express.motiontms.com/*
 // @run-at       document-idle
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Max%20Rows%20%26%20My%20Group%20(No%20Auto-Paging).user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Max%20Rows%20%26%20My%20Group%20(No%20Auto-Paging).user.js
 // ==/UserScript==
 
 (function () {
