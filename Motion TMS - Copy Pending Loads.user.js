@@ -6,6 +6,8 @@
 // @match        https://express.motiontms.com/loads/pending-list*
 // @grant        GM_setClipboard
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/Motion%20TMS%20-%20Copy%20Pending%20Loads.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/Motion%20TMS%20-%20Copy%20Pending%20Loads.user.js
 // ==/UserScript==
 
 (function () {
