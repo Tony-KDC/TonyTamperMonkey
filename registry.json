@@ -1,0 +1,34 @@
+{
+  "scripts": [
+    {
+      "name": "DAT One – City Zip Code Injector",
+      "description": "Injects city zip code data into DAT One",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20%E2%80%93%20City%20Zip%20Code%20Injector.user.js"
+    },
+    {
+      "name": "DAT to Apex - MC Checker + Route Tools",
+      "description": "MC checker and route tools between DAT and Apex",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20to%20Apex%20-%20MC%20Checker%20%2B%20Route%20Tools.user.js"
+    },
+    {
+      "name": "Motion Express - Past Due In-Transit Loads",
+      "description": "Highlights past due in-transit loads in Motion Express",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/Motion%20Express%20-%20Past%20Due%20In-Transit%20Loads.user.js"
+    },
+    {
+      "name": "Motion TMS - Copy Pending Loads",
+      "description": "Copies pending loads in Motion TMS",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/Motion%20TMS%20-%20Copy%20Pending%20Loads.user.js"
+    },
+    {
+      "name": "MotionTMS Copy Trucks iPad Manual Copy",
+      "description": "Manual copy tool for trucks on iPad in MotionTMS",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Copy%20Trucks%20iPad%20Manual%20Copy.user.js"
+    },
+    {
+      "name": "MotionTMS Max Rows & My Group (No Auto-Paging)",
+      "description": "Sets max rows and disables auto-paging in MotionTMS",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Max%20Rows%20%26%20My%20Group%20(No%20Auto-Paging).user.js"
+    }
+  ]
+}
