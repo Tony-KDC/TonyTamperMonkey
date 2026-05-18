@@ -6,6 +6,8 @@
 // @match        https://express.motiontms.com/loads/in-transit-list*
 // @grant        GM_setClipboard
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/Motion%20Express%20-%20Past%20Due%20In-Transit%20Loads.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/Motion%20Express%20-%20Past%20Due%20In-Transit%20Loads.user.js
 // ==/UserScript==
 
 (function () {
