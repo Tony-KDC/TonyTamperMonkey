@@ -7,6 +7,9 @@
 // @match        https://one.dat.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      api.zippopotam.us
+// @version      1.0
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20%E2%80%93%20City%20Zip%20Code%20Injector.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20%E2%80%93%20City%20Zip%20Code%20Injector.user.js
 // ==/UserScript==
 
 (function () {
