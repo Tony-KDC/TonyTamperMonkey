@@ -6,6 +6,8 @@
 // @match        https://express.motiontms.com/*
 // @grant        GM_setClipboard
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Copy%20Trucks%20iPad%20Manual%20Copy.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Copy%20Trucks%20iPad%20Manual%20Copy.user.js
 // ==/UserScript==
 
 (function () {
