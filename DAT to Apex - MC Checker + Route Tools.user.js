@@ -17,50 +17,76 @@
     'use strict';
 
     // ==========================================
-    // PART 1: APEX DASHBOARD LOGIC
-    // ==========================================
-    if (window.location.href.includes('apexcapitalcorp.com')) {
-        console.log("Apex Script Active: Watching for MC numbers...");
+// PART 1: APEX DASHBOARD LOGIC - FIXED
+// ==========================================
+if (window.location.href.includes('apexcapitalcorp.com')) {
+    console.log('[TM Apex] Active');
 
-        function checkAndFillMC() {
-            // Get the pending MC number from Tampermonkey memory
-            const pendingMC = GM_getValue('pending_mc_number', '');
+    let lastHandled = '';
 
-            if (pendingMC && pendingMC !== '') {
-                console.log("Found pending MC number:", pendingMC);
-
-                const mcInput = document.getElementById('motorCarrierNumber');
-                const goButton = document.getElementById('cc_go_button');
-
-                if (mcInput && goButton) {
-                    // 1. Immediately wipe the memory so it doesn't loop forever
-                    GM_setValue('pending_mc_number', '');
-
-                    // 2. Fill the input field
-                    mcInput.value = pendingMC;
-
-                    // Trigger input events in case the website uses frameworks that need to "see" the typing
-                    mcInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    mcInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-                    // 3. Click the Go button
-                    console.log("Clicking Go button...");
-                    setTimeout(() => { goButton.click(); }, 100);
-                }
-            }
-        }
-
-        // Check immediately when the page loads (for new tabs)
-        window.addEventListener('load', checkAndFillMC);
-        checkAndFillMC();
-
-        // Check continuously every 500ms (for when you manually switch to an already open tab)
-        setInterval(checkAndFillMC, 500);
-
-        // Stop execution here so the DAT stuff doesn't run on Apex
-        return;
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    async function waitForElement(selector, timeout = 15000) {
+        const start = Date.now();
+
+        while (Date.now() - start < timeout) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+            await sleep(300);
+        }
+
+        return null;
+    }
+
+    function setNativeValue(el, value) {
+        const setter = Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set;
+        setter ? setter.call(el, value) : el.value = value;
+
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    }
+
+    async function checkAndFillMC() {
+        const pendingMC = GM_getValue('pending_mc_number', '');
+
+        if (!pendingMC || pendingMC === lastHandled) return;
+
+        console.log('[TM Apex] Pending MC found:', pendingMC);
+
+        const mcInput = await waitForElement('#motorCarrierNumber');
+        const goButton = await waitForElement('#cc_go_button');
+
+        if (!mcInput || !goButton) {
+            console.warn('[TM Apex] Input or Go button not found');
+            return;
+        }
+
+        lastHandled = pendingMC;
+
+        mcInput.focus();
+        setNativeValue(mcInput, '');
+        await sleep(100);
+        setNativeValue(mcInput, pendingMC);
+
+        await sleep(300);
+
+        console.log('[TM Apex] Clicking Go');
+        goButton.click();
+
+        await sleep(800);
+        GM_setValue('pending_mc_number', '');
+    }
+
+    setInterval(checkAndFillMC, 700);
+    window.addEventListener('focus', checkAndFillMC);
+    window.addEventListener('load', checkAndFillMC);
+    checkAndFillMC();
+
+    return;
+}
 
     // ==========================================
     // PART 2: DAT ONE LOGIC
