@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT to Apex - MC Checker + Route Tools
 // @namespace    http://tampermonkey.net/
-// @version      5.1
-// @description  Adds Copy Route, Maps, and Apex MC check buttons to DAT One. Auto-fills and submits on Apex Dashboard.
+// @version      6.2
+// @description  Adds Copy Route, Maps, and Apex MC check buttons to DAT One. Auto-fills and submits on Apex Dashboard, then paints the DAT button with the Apex verdict read from the results table (OK / RISK / CHECKED). Verdicts older than 24 hours paint as STALE instead of staying green.
 // @match        https://one.dat.com/*
 // @match        https://amp.apexcapitalcorp.com/*
 // @grant        GM_setClipboard
@@ -17,76 +17,204 @@
     'use strict';
 
     // ==========================================
-// PART 1: APEX DASHBOARD LOGIC - FIXED
-// ==========================================
-if (window.location.href.includes('apexcapitalcorp.com')) {
-    console.log('[TM Apex] Active');
+    // PART 1: APEX DASHBOARD LOGIC - REVAMPED UI
+    // ==========================================
+    // Apex replaced the old credit-check form (separate #motorCarrierNumber,
+    // #companyName, #state fields) with ONE search box: #creditCheckSearch
+    // ("Search Company, MC#, or FF#"). The old field no longer exists, which
+    // is why the fill stopped working.
+    //
+    // New Apex flow this code follows:
+    //  1. Type the MC into #creditCheckSearch. The Go button (#cc_go_button)
+    //     starts out disabled and only enables once the box has 3+ characters,
+    //     so we must fire real 'input' events after setting the value.
+    //  2. Clicking Go opens Apex's own "Search Customer" dialog. If the MC
+    //     matches exactly one company, Apex runs the credit check on its own;
+    //     if several match, the user picks one in the dialog.
+    //  3. The finished check appears as the NEWEST row of the Recent Credit
+    //     Checks table inside #CreditCheckPanel (columns: Date, Company,
+    //     Status, Credit Limit, Remaining, Note, Override). We read the
+    //     verdict from that row's Status column — no guessing from page text.
+    if (window.location.href.includes('apexcapitalcorp.com')) {
+        console.log('[TM Apex] Active');
 
-    let lastHandled = '';
+        let lastHandled = '';
 
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+        const SEARCH_INPUT_SEL = '#creditCheckSearch';
+        const GO_BUTTON_SEL = '#cc_go_button';
+        const PANEL_SEL = '#CreditCheckPanel';
+        const RESULT_KEY_PREFIX = 'apex_result_';
+        const CAPTURE_MC_KEY = 'apex_capture_mc';
+        const CAPTURE_TS_KEY = 'apex_capture_ts';
+        const CAPTURE_BASELINE_KEY = 'apex_capture_baseline';
+        const CAPTURE_WINDOW_MS = 120000; // user may need time to pick in the dialog
 
-    async function waitForElement(selector, timeout = 15000) {
-        const start = Date.now();
-
-        while (Date.now() - start < timeout) {
-            const el = document.querySelector(selector);
-            if (el) return el;
-            await sleep(300);
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         }
 
-        return null;
-    }
+        async function waitForElement(selector, timeout = 15000) {
+            const start = Date.now();
 
-    function setNativeValue(el, value) {
-        const setter = Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set;
-        setter ? setter.call(el, value) : el.value = value;
+            while (Date.now() - start < timeout) {
+                const el = document.querySelector(selector);
+                if (el) return el;
+                await sleep(300);
+            }
 
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-    }
-
-    async function checkAndFillMC() {
-        const pendingMC = GM_getValue('pending_mc_number', '');
-
-        if (!pendingMC || pendingMC === lastHandled) return;
-
-        console.log('[TM Apex] Pending MC found:', pendingMC);
-
-        const mcInput = await waitForElement('#motorCarrierNumber');
-        const goButton = await waitForElement('#cc_go_button');
-
-        if (!mcInput || !goButton) {
-            console.warn('[TM Apex] Input or Go button not found');
-            return;
+            return null;
         }
 
-        lastHandled = pendingMC;
+        async function waitForEnabled(el, timeout = 3000) {
+            const start = Date.now();
+            while (Date.now() - start < timeout) {
+                if (!el.disabled) return true;
+                await sleep(200);
+            }
+            return !el.disabled;
+        }
 
-        mcInput.focus();
-        setNativeValue(mcInput, '');
-        await sleep(100);
-        setNativeValue(mcInput, pendingMC);
+        function setNativeValue(el, value) {
+            const setter = Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set;
+            setter ? setter.call(el, value) : el.value = value;
 
-        await sleep(300);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        }
 
-        console.log('[TM Apex] Clicking Go');
-        goButton.click();
+        // Read the newest row of the Recent Credit Checks table.
+        // Returns { id, company, status, note } or null.
+        function getTopCheckRow() {
+            const panel = document.querySelector(PANEL_SEL);
+            if (!panel) return null;
 
-        await sleep(800);
-        GM_setValue('pending_mc_number', '');
+            const table = panel.querySelector('table#row') || panel.querySelector('table.report');
+            if (!table) return null;
+
+            const rows = table.querySelectorAll('tr');
+            for (let i = 0; i < rows.length; i++) {
+                const cells = rows[i].querySelectorAll('td');
+                if (cells.length < 3) continue;
+
+                const dateLink = cells[0].querySelector('a[href*="CreditCheckPage.do?id="]');
+                if (!dateLink) continue; // header row has no such link
+
+                const idMatch = (dateLink.getAttribute('href') || '').match(/id=(\d+)/);
+                const companyLink = cells[1].querySelector('a');
+                const noteIcon = rows[i].querySelector('.cc-note-icon');
+
+                return {
+                    id: idMatch ? parseInt(idMatch[1], 10) : 0,
+                    company: (companyLink ? companyLink.textContent : cells[1].textContent).replace(/\s+/g, ' ').trim(),
+                    status: cells[2].textContent.replace(/\s+/g, ' ').trim(),
+                    note: noteIcon ? (noteIcon.getAttribute('title') || '').trim() : ''
+                };
+            }
+            return null;
+        }
+
+        function classifyStatus(statusText) {
+            const s = (statusText || '').toLowerCase();
+            if (/not\s+approved|declin|denied|reject|ineligible/.test(s)) return 'risk';
+            if (/approved/.test(s)) return 'approved';
+            return 'checked';
+        }
+
+        function saveApexResult(mc, verdict, detail) {
+            const payload = { mc: mc, verdict: verdict, detail: detail || '', ts: Date.now() };
+            GM_setValue(RESULT_KEY_PREFIX + mc, JSON.stringify(payload));
+            GM_setValue('apex_last_result', JSON.stringify(payload));
+            GM_setValue(CAPTURE_MC_KEY, '');
+            GM_setValue(CAPTURE_BASELINE_KEY, '');
+            console.log('[TM Apex] Verdict saved for MC', mc, payload);
+        }
+
+        // Watch for our check to land as a new top row in the results table.
+        function detectVerdict() {
+            const mc = GM_getValue(CAPTURE_MC_KEY, '');
+            if (!mc) return;
+
+            const startedAt = parseInt(GM_getValue(CAPTURE_TS_KEY, '0'), 10) || 0;
+            if (Date.now() - startedAt > CAPTURE_WINDOW_MS) {
+                GM_setValue(CAPTURE_MC_KEY, '');
+                GM_setValue(CAPTURE_BASELINE_KEY, '');
+                console.log('[TM Apex] Capture window expired for MC', mc);
+                return;
+            }
+
+            const baselineRaw = GM_getValue(CAPTURE_BASELINE_KEY, '');
+            if (baselineRaw === '') return; // no baseline recorded — never guess
+            const baseline = parseInt(baselineRaw, 10) || 0;
+
+            const top = getTopCheckRow();
+            if (!top || !top.id) return;
+            if (top.id <= baseline) return; // still the pre-check top row
+
+            const verdict = classifyStatus(top.status);
+            let detail = `${top.company} — Status: ${top.status}`;
+            if (top.note) detail += ` — Note: ${top.note}`;
+            saveApexResult(mc, verdict, detail);
+        }
+
+        async function checkAndFillMC() {
+            const pendingMC = GM_getValue('pending_mc_number', '');
+
+            if (!pendingMC || pendingMC === lastHandled) return;
+
+            console.log('[TM Apex] Pending MC found:', pendingMC);
+
+            const searchInput = await waitForElement(SEARCH_INPUT_SEL);
+            const goButton = await waitForElement(GO_BUTTON_SEL);
+
+            if (!searchInput || !goButton) {
+                console.warn('[TM Apex] Credit check search box or Go button not found');
+                return;
+            }
+
+            lastHandled = pendingMC;
+
+            // Remember the newest existing check BEFORE submitting, so
+            // detectVerdict() can recognise the new row when it appears.
+            const topBefore = getTopCheckRow();
+            GM_setValue(CAPTURE_BASELINE_KEY, topBefore ? String(topBefore.id) : '0');
+
+            searchInput.focus();
+            setNativeValue(searchInput, '');
+            await sleep(100);
+            setNativeValue(searchInput, pendingMC);
+
+            // Go stays disabled until Apex registers the input. Wait for it;
+            // if native events didn't do it, nudge through Apex's own jQuery.
+            let enabled = await waitForEnabled(goButton, 3000);
+            if (!enabled && window.$) {
+                try { window.$(searchInput).val(pendingMC).trigger('input').trigger('change').trigger('keyup'); } catch (e) {}
+                enabled = await waitForEnabled(goButton, 2000);
+            }
+            if (!enabled) {
+                console.warn('[TM Apex] Go button never enabled');
+                GM_setValue('pending_mc_number', '');
+                return;
+            }
+
+            // Arm verdict capture BEFORE opening the search dialog.
+            GM_setValue(CAPTURE_MC_KEY, pendingMC);
+            GM_setValue(CAPTURE_TS_KEY, String(Date.now()));
+
+            console.log('[TM Apex] Clicking Go');
+            goButton.click();
+
+            await sleep(800);
+            GM_setValue('pending_mc_number', '');
+        }
+
+        setInterval(() => { checkAndFillMC(); detectVerdict(); }, 700);
+        window.addEventListener('focus', () => { checkAndFillMC(); detectVerdict(); });
+        window.addEventListener('load', () => { checkAndFillMC(); detectVerdict(); });
+        checkAndFillMC();
+
+        return;
     }
-
-    setInterval(checkAndFillMC, 700);
-    window.addEventListener('focus', checkAndFillMC);
-    window.addEventListener('load', checkAndFillMC);
-    checkAndFillMC();
-
-    return;
-}
 
     // ==========================================
     // PART 2: DAT ONE LOGIC
@@ -162,6 +290,12 @@ if (window.location.href.includes('apexcapitalcorp.com')) {
             }
             .tm-apex-btn:hover { background: #fcebc7 !important; border-color: #b07a00 !important; }
             .tm-apex-btn.tm-apex-sending { background: #e8f5e9 !important; border-color: #1b8f3a !important; color: #1b8f3a !important; }
+
+            /* APEX VERDICT STYLES (painted from the stored Apex result) */
+            .tm-apex-btn.tm-apex-ok { background: #e8f5e9 !important; border-color: #1b8f3a !important; color: #1b8f3a !important; }
+            .tm-apex-btn.tm-apex-risk { background: #ffebee !important; border-color: #d90429 !important; color: #d90429 !important; }
+            .tm-apex-btn.tm-apex-done { background: #eef1f4 !important; border-color: #9aa5b1 !important; color: #45525e !important; }
+            .tm-apex-btn.tm-apex-stale { background: #fdf5e6 !important; border-color: #d19900 !important; color: #8a5b00 !important; }
 
             /* Modal Styles */
             .tm-copy-modal-backdrop { position: fixed !important; inset: 0 !important; background: rgba(0,0,0,.45) !important; z-index: 2147483646 !important; display: flex !important; align-items: center !important; justify-content: center !important; padding: 20px !important; }
@@ -312,8 +446,9 @@ if (window.location.href.includes('apexcapitalcorp.com')) {
             if (el.dataset.apexBtnInjected) return;
 
             const text = cleanText(el.textContent);
-            // Look for "MC#" followed by numbers
-            const match = text.match(/MC#\s*(\d{5,8})/i);
+            // Look for "MC" followed by numbers: matches MC# 123456, MC 123456,
+            // MC-123456, MC#123456 (v6.0 loosened the original "MC#" only rule)
+            const match = text.match(/\bMC\s*#?\s*-?\s*(\d{5,8})\b/i);
 
             if (match && el.children.length === 0) {
                 const mcNumber = match[1];
@@ -321,6 +456,7 @@ if (window.location.href.includes('apexcapitalcorp.com')) {
 
                 const btn = document.createElement('button');
                 btn.className = 'tm-apex-btn';
+                btn.dataset.mc = mcNumber;
                 btn.textContent = 'CHECK APEX';
                 btn.title = `Check MC# ${mcNumber} on Apex`;
 
@@ -342,6 +478,71 @@ if (window.location.href.includes('apexcapitalcorp.com')) {
                 btn.addEventListener('touchend', handler, { passive: false });
 
                 el.insertAdjacentElement('afterend', btn);
+            }
+        });
+    }
+
+    // --- Paint stored Apex verdicts onto the DAT buttons (v6.0, freshness v6.2) ---
+    // A stored verdict is only trusted for STALE_HOURS. Past that the button
+    // stops showing green/red and paints amber "STALE" instead — a broker
+    // that was fine on Monday can be out of business by Wednesday, and an
+    // old APPROVED must not keep looking fresh. Clicking still re-runs the
+    // check and overwrites the stored result.
+    const STALE_HOURS = 24;
+
+    function getStoredResult(mc) {
+        try {
+            const raw = GM_getValue('apex_result_' + mc, '');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+
+    function ageText(ageMs) {
+        const hours = ageMs / 3600000;
+        if (hours < 1) return 'under an hour ago';
+        if (hours < 48) return Math.round(hours) + ' hours ago';
+        return Math.round(hours / 24) + ' days ago';
+    }
+
+    function paintVerdicts() {
+        document.querySelectorAll('.tm-apex-btn[data-mc]').forEach(btn => {
+            const res = getStoredResult(btn.dataset.mc);
+            if (!res) return;
+
+            const ageMs = Date.now() - (res.ts || 0);
+            const stale = ageMs > STALE_HOURS * 3600000;
+
+            const key = res.verdict + '|' + res.ts + '|' + (stale ? 'stale' : 'fresh');
+            if (btn.dataset.verdictKey === key) return;
+            btn.dataset.verdictKey = key;
+
+            const whenStr = new Date(res.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+            btn.classList.remove('tm-apex-ok', 'tm-apex-risk', 'tm-apex-done', 'tm-apex-stale');
+
+            if (stale) {
+                btn.classList.add('tm-apex-stale');
+                const glyph = res.verdict === 'approved' ? '✓' : (res.verdict === 'checked' ? '↻' : '✗');
+                btn.textContent = `APEX ${glyph} STALE`;
+                btn.title = `MC# ${btn.dataset.mc} — last checked ${whenStr} (${ageText(ageMs)}). This result is STALE.` +
+                    (res.detail ? `\nApex said then: ${res.detail}` : '') +
+                    `\nClick to run a fresh check.`;
+                return;
+            }
+
+            btn.title = `MC# ${btn.dataset.mc} — checked ${whenStr}` + (res.detail ? `\nApex said: ${res.detail}` : '');
+
+            if (res.verdict === 'approved') {
+                btn.classList.add('tm-apex-ok');
+                btn.textContent = 'APEX ✓ OK';
+            } else if (res.verdict === 'risk') {
+                btn.classList.add('tm-apex-risk');
+                btn.textContent = 'APEX ✗ RISK';
+            } else if (res.verdict === 'notfound') {
+                btn.classList.add('tm-apex-risk');
+                btn.textContent = 'APEX ✗ NO RECORD';
+            } else {
+                btn.classList.add('tm-apex-done');
+                btn.textContent = 'APEX: CHECKED';
             }
         });
     }
@@ -373,6 +574,7 @@ if (window.location.href.includes('apexcapitalcorp.com')) {
         addStyles();
         injectRouteButtons();
         injectApexButtons();
+        paintVerdicts();
     }
 
     let debounce;

@@ -1,12 +1,13 @@
-
 // ==UserScript==
 // @name         MotionTMS Copy Trucks iPad Manual Copy
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Show grouped truck text in a selectable box for iPad Safari
 // @match        https://express.motiontms.com/*
 // @grant        GM_setClipboard
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Copy%20Trucks%20iPad%20Manual%20Copy.user.js
+// @downloadURL  https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/MotionTMS%20Copy%20Trucks%20iPad%20Manual%20Copy.user.js
 // ==/UserScript==
 (function () {
   'use strict';
@@ -20,13 +21,25 @@
       .trim();
   }
   function findTable() {
-    return document.querySelector('#express-unit-list-table table') ||
+    // Motion update (Oct 2026): the old #express-unit-list-table <table> is gone.
+    // The list is now an Angular Material <mat-table>. Keep the old lookups as
+    // fallbacks in case Motion rolls the change back.
+    return document.querySelector('mat-table') ||
+           document.querySelector('app-available-units-table') ||
+           document.querySelector('#express-unit-list-table table') ||
            document.querySelector('#express-unit-list-table') ||
            document.querySelector('[id*="express-unit-list-table"] table') ||
            document.querySelector('[id*="express-unit-list-table"]') ||
            document.querySelector('table');
   }
   function getRows() {
+    // New markup: <mat-row class="mat-row cdk-row available-unit-row"
+    //   data-testid="at-available-unit-row-<uuid>"> with <mat-cell> children.
+    // Old markup: <tbody><tr data-testid="at-available-unit-row..."><td>...
+    const newRows = Array.from(document.querySelectorAll(
+      'mat-row[data-testid^="at-available-unit-row-"], mat-row.available-unit-row, .mat-row.available-unit-row'
+    )).filter(tr => tr.querySelectorAll('mat-cell, td').length);
+    if (newRows.length) return newRows;
     const table = findTable();
     if (!table) return [];
     return Array.from(table.querySelectorAll('tbody tr'))
@@ -47,18 +60,58 @@
   }
   function simplifyTruck(text) {
     let t = clean(text);
+    // Truck cell text looks like "2603 Box Truck" or "235C Tractor-Trailer".
+    // The truck number is the first token; the rest is the equipment type.
+    const firstToken = t.split(' ')[0] || '';
+    if (/^\d{1,5}[A-Z]?$/i.test(firstToken)) return firstToken.toUpperCase();
     const match = t.match(/\b\d{1,5}[A-Z]\b/i);
     if (match) return match[0].toUpperCase();
     t = t.replace(/tractor[-\s]?trailer/gi, '');
+    t = t.replace(/box truck/gi, '');
     t = t.replace(/truck contact:.*$/i, '');
     return clean(t);
+  }
+  function getTruck(row) {
+    // Preferred: the preview-link inside the truck cell holds exactly the
+    // truck number ("2603", "235C", ...), with no equipment type after it.
+    const cell = row.querySelector(
+      '[data-testid^="at-truck-"], td.column-truck, [class*="column-truck"], mat-cell.cdk-column-truckExpress, mat-cell:nth-of-type(3), td:nth-child(3)'
+    );
+    if (cell) {
+      const link = cell.querySelector('.preview-link, app-unit-information-preview-link div');
+      const linkText = link ? clean(link.innerText || link.textContent) : '';
+      if (linkText) return simplifyTruck(linkText);
+      const cellText = clean(cell.innerText || cell.textContent);
+      if (cellText) return simplifyTruck(cellText);
+    }
+    return '';
   }
   function simplifyLocation(text) {
     let t = clean(text);
     t = t.replace(/^location_on\s*/i, '');
     t = t.replace(/\bEdit\b$/i, '');
     t = t.replace(/,\s*([A-Z]{2})\s*\d{5}(?:-\d{4})?/i, ', $1');
+    // Fix stray space before comma, e.g. "SPARKS , NV" -> "SPARKS, NV"
+    t = t.replace(/\s+,/g, ',');
     return clean(t);
+  }
+  function getLocation(row) {
+    // Preferred: the location cell has a div whose title attribute is
+    // exactly "Tracy, CA 95376 " — no location_on icon text, no Edit link.
+    const cell = row.querySelector(
+      '[data-testid^="at-location-"], td.column-location, [class*="column-location"], mat-cell.cdk-column-currentLocationExpress, mat-cell:nth-of-type(7), td:nth-child(6)'
+    );
+    if (cell) {
+      const titled = cell.querySelector('[title]');
+      const titleText = titled ? clean(titled.getAttribute('title')) : '';
+      if (titleText) return simplifyLocation(titleText);
+      const label = cell.querySelector('.label-2');
+      const labelText = label ? clean(label.innerText || label.textContent) : '';
+      if (labelText) return simplifyLocation(labelText);
+      const cellText = clean(cell.innerText || cell.textContent);
+      if (cellText) return simplifyLocation(cellText);
+    }
+    return '';
   }
   function parseDateAndTime(text) {
     const t = clean(text);
@@ -74,27 +127,18 @@
   function extractGrouped() {
     const byDate = {};
     getRows().forEach(row => {
-      const truckRaw = getCell(row, [
-        '[id^="at-truck-n"]',
-        'td.column-truck',
-        '[class*="column-truck"]',
-        'td:nth-child(3)'
-      ]);
-      const locRaw = getCell(row, [
-        '[id^="at-location-n"]',
-        'td.column-location',
-        '[class*="column-location"]',
-        'td:nth-child(6)'
-      ]);
+      const truck = getTruck(row);
+      const loc = getLocation(row);
       const availRaw = getCell(row, [
-        '[id^="at-available-date-n"]',
+        '[data-testid^="at-available-unit-time-"]',
+        '[data-testid^="at-available-date-"]',
         'td.column-available-date',
         '[class*="column-available-date"]',
+        'mat-cell.cdk-column-availableDate',
+        'mat-cell:nth-of-type(1)',
         'td:nth-child(1)'
       ]);
-      if (!truckRaw || !locRaw || !availRaw) return;
-      const truck = simplifyTruck(truckRaw);
-      const loc = simplifyLocation(locRaw);
+      if (!truck || !loc || !availRaw) return;
       const dt = parseDateAndTime(availRaw);
       if (!dt.date || !truck || !loc) return;
       const oneLine = clean(`${truck} ${loc} ${dt.time}`);
@@ -104,10 +148,7 @@
     return byDate;
   }
   function buildTSV(byDate) {
-    const dates = Object.keys(byDate).sort((a, b) => {
-      const toKey = d => d.split('/').reverse().join('-');
-      return toKey(a).localeCompare(toKey(b));
-    });
+    const dates = Object.keys(byDate).sort((a, b) => new Date(a) - new Date(b));
     const maxLen = Math.max(0, ...dates.map(d => byDate[d].length));
     const lines = [dates.join('\t')];
     for (let i = 0; i < maxLen; i++) {
