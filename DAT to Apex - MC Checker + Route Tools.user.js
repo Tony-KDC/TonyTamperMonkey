@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT to Apex - MC Checker + Route Tools
 // @namespace    http://tampermonkey.net/
-// @version      6.2
-// @description  Adds Copy Route, Maps, and Apex MC check buttons to DAT One. Auto-fills and submits on Apex Dashboard, then paints the DAT button with the Apex verdict read from the results table (OK / RISK / CHECKED). Verdicts older than 24 hours paint as STALE instead of staying green.
+// @version      6.3
+// @description  Adds Copy Route, Maps, and Apex MC check buttons to DAT One. Auto-fills and submits on Apex Dashboard, then paints the DAT button with the Apex verdict read from the results table (OK / RISK / CHECKED). Verdicts older than 24 hours paint as STALE instead of staying green. v6.3: fixed for DAT's new load-details UI, where the MC number now lives in a .compliance-number element with a copy button inside it.
 // @match        https://one.dat.com/*
 // @match        https://amp.apexcapitalcorp.com/*
 // @grant        GM_setClipboard
@@ -438,46 +438,97 @@
         return btn;
     }
 
-    // --- Inject Apex MC Buttons next to text ---
+    // --- Inject Apex MC Buttons ---
+    // v6.3 — DAT changed the load-details UI (Oct 2026). The MC number used
+    // to sit in a plain leaf element with no children, so the old injector
+    // required el.children.length === 0. Now DAT renders it as:
+    //   <div class="city-spacing compliance-number"> MC#667678
+    //     <load-details-copy-button data-test="load-compliance-number-copy-button"
+    //        value="MC#667678" label="Copy MC number">…</load-details-copy-button>
+    //   </div>
+    // That div HAS a child element, so the leaf check never matched and no
+    // CHECK APEX button appeared. Fix: read the MC from the copy button's
+    // own value attribute (exact, no text guessing), with the
+    // .compliance-number text as a second source, and keep the old leaf
+    // scan as a fallback for any other DAT view that still uses it.
+    function makeApexButton(mcNumber) {
+        const btn = document.createElement('button');
+        btn.className = 'tm-apex-btn';
+        btn.type = 'button';
+        btn.dataset.mc = mcNumber;
+        btn.textContent = 'CHECK APEX';
+        btn.title = `Check MC# ${mcNumber} on Apex`;
+
+        const handler = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // 1. Send the data to Tampermonkey storage
+            GM_setValue('pending_mc_number', mcNumber);
+
+            // 2. Visual feedback
+            flashButton(btn, 'SENT!', 'tm-apex-sending');
+
+            // 3. Open Apex tab
+            window.open('https://amp.apexcapitalcorp.com/m3clients/Dashboard.do', 'apex_dashboard_window');
+        };
+
+        btn.addEventListener('click', handler, { passive: false });
+        btn.addEventListener('touchend', handler, { passive: false });
+        return btn;
+    }
+
+    function parseMc(text) {
+        // Matches MC# 123456, MC 123456, MC-123456, MC#123456
+        const match = (text || '').match(/\bMC\s*#?\s*-?\s*(\d{5,8})\b/i);
+        return match ? match[1] : null;
+    }
+
     function injectApexButtons() {
+        // PRIMARY (new DAT UI): the compliance-number copy button carries
+        // the exact value, e.g. value="MC#667678" (the DOT one says DOT#…,
+        // which parseMc correctly ignores).
+        document.querySelectorAll('load-details-copy-button[data-test="load-compliance-number-copy-button"]').forEach(copyBtn => {
+            const mcNumber = parseMc(copyBtn.getAttribute('value') || '');
+            if (!mcNumber) return;
+
+            const host = copyBtn.closest('.compliance-number') || copyBtn.parentElement;
+            if (!host) return;
+            if (host.querySelector('.tm-apex-btn')) return;
+            if (copyBtn.dataset.apexBtnInjected) return;
+            copyBtn.dataset.apexBtnInjected = 'true';
+            host.dataset.apexBtnInjected = 'true';
+
+            // Append inside the compliance-number div, right after DAT's
+            // own copy icon, so the button sits next to the MC number.
+            host.appendChild(makeApexButton(mcNumber));
+        });
+
+        // SECONDARY (new DAT UI, no copy button present): read the
+        // .compliance-number element's own text directly. This element has
+        // children, so it must NOT go through the leaf check below.
+        document.querySelectorAll('.compliance-number').forEach(el => {
+            if (el.querySelector('.tm-apex-btn')) return;
+            const mcNumber = parseMc(el.textContent);
+            if (!mcNumber) return;
+            el.dataset.apexBtnInjected = 'true';
+            el.appendChild(makeApexButton(mcNumber));
+        });
+
+        // FALLBACK (older / other DAT views): original leaf-element scan.
         const mcElements = document.querySelectorAll('div, span, a');
 
         mcElements.forEach(el => {
             if (el.dataset.apexBtnInjected) return;
+            if (el.closest('.compliance-number')) return; // handled above
+            if (el.classList.contains('tm-apex-btn')) return;
 
-            const text = cleanText(el.textContent);
-            // Look for "MC" followed by numbers: matches MC# 123456, MC 123456,
-            // MC-123456, MC#123456 (v6.0 loosened the original "MC#" only rule)
-            const match = text.match(/\bMC\s*#?\s*-?\s*(\d{5,8})\b/i);
-
-            if (match && el.children.length === 0) {
-                const mcNumber = match[1];
+            const mcNumber = parseMc(cleanText(el.textContent));
+            if (mcNumber && el.children.length === 0) {
+                // Don't stack a second button if one is already next to it.
+                if (el.nextElementSibling && el.nextElementSibling.classList.contains('tm-apex-btn')) return;
                 el.dataset.apexBtnInjected = 'true';
-
-                const btn = document.createElement('button');
-                btn.className = 'tm-apex-btn';
-                btn.dataset.mc = mcNumber;
-                btn.textContent = 'CHECK APEX';
-                btn.title = `Check MC# ${mcNumber} on Apex`;
-
-                const handler = function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    // 1. Send the data to Tampermonkey storage
-                    GM_setValue('pending_mc_number', mcNumber);
-
-                    // 2. Visual feedback
-                    flashButton(btn, 'SENT!', 'tm-apex-sending');
-
-                    // 3. Open Apex tab
-                    window.open('https://amp.apexcapitalcorp.com/m3clients/Dashboard.do', 'apex_dashboard_window');
-                };
-
-                btn.addEventListener('click', handler, { passive: false });
-                btn.addEventListener('touchend', handler, { passive: false });
-
-                el.insertAdjacentElement('afterend', btn);
+                el.insertAdjacentElement('afterend', makeApexButton(mcNumber));
             }
         });
     }

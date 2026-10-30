@@ -6,7 +6,7 @@ Tampermonkey userscripts for truck dispatch work — DAT One, Apex Capital Corp,
 
 | Script | Version | Runs on | What it does |
 |---|---|---|---|
-| DAT to Apex - MC Checker + Route Tools | 6.2 | one.dat.com, amp.apexcapitalcorp.com | Adds CHECK APEX buttons next to broker MC numbers on DAT. Clicking opens Apex, auto-fills and submits the credit check, then paints the DAT button with the verdict (OK / RISK / CHECKED). Verdicts older than 24 hours paint amber as STALE — click to re-check. Also adds Copy Route and Open Google Maps buttons. |
+| DAT to Apex - MC Checker + Route Tools | 6.3 | one.dat.com, amp.apexcapitalcorp.com | Adds CHECK APEX buttons next to broker MC numbers on DAT. Clicking opens Apex, auto-fills and submits the credit check, then paints the DAT button with the verdict (OK / RISK / CHECKED). Verdicts older than 24 hours paint amber as STALE — click to re-check. Also adds Copy Route and Open Google Maps buttons. |
 | DAT One – Rate-Per-Mile Badges | 1.1 | one.dat.com | Shows $/mile badges on DAT loads. Loaded $/mi uses DAT's own trip miles (zip-code estimate as fallback); also shows an all-in $/mi that includes DAT's deadhead from your search origin. Full breakdown in the tooltip. |
 | DAT One – City Zip Code Injector | 3.0 | one.dat.com | Shows zip codes next to city names in load rows and the detail panel on DAT One. |
 | MotionTMS Copy Trucks iPad Manual Copy | 1.4 | express.motiontms.com | "Copy Trucks" button on the Available Trucks page. Groups available trucks by date into a selectable text box (built for manual copy on iPad Safari), formatted as tab-separated columns by date, ready to paste into the truck board. |
