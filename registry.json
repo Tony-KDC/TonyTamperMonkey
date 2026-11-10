@@ -13,6 +13,12 @@
       "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20to%20Apex%20-%20MC%20Checker%20%2B%20Route%20Tools.user.js"
     },
     {
+      "name": "DAT One - Gmail Email Load Helper SAFE",
+      "version": "5.2",
+      "description": "Adds a green Email Load button next to the broker's email on DAT load details: opens a Gmail compose to the broker (CC Teamblue@uskoinc.com) with subject 'Load Inquiry - [route]' and auto-inserts the load body (route, pickup date, miles, reference). Gmail side shows a small helper badge.",
+      "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20-%20Gmail%20Email%20Load%20Helper%20SAFE.user.js"
+    },
+    {
       "name": "DAT One – Rate-Per-Mile Badges",
       "version": "1.1",
       "description": "Shows $/mile badges on DAT One loads: loaded $/mi from DAT trip miles (zip estimate as fallback) plus an all-in $/mi with DAT deadhead",
