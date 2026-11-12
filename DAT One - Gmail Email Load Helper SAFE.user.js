@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT One - Gmail Email Load Helper SAFE
 // @namespace    http://tampermonkey.net/
-// @version      5.2
-// @description  DAT Email Load button + safer Gmail helper
+// @version      5.3
+// @description  DAT Email Load button + safer Gmail helper. v5.3: the email body no longer includes the Miles line.
 // @match        https://one.dat.com/*
 // @match        https://mail.google.com/*
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
   'use strict';
 
   const TEAM_CC = 'Teamblue@uskoinc.com';
-  const STORAGE_KEY = 'dat_pending_load_email_v52';
+  const STORAGE_KEY = 'dat_pending_load_email_v53';
   const BTN_CLASS = 'tm-email-load-btn';
 
   function clean(text) {
@@ -70,7 +70,6 @@
       pickup: getText(root, '.route-origin .city'),
       drop: getText(root, '.route-destination .city'),
       pickupDate: getText(root, '.route-origin .date'),
-      miles: getText(root, '.trip-miles'),
       reference: getDataRow(root, 'Reference ID')
     };
   }
@@ -92,10 +91,6 @@
 
     if (info.pickupDate) {
       lines.push(`Pickup Date: ${info.pickupDate}`);
-    }
-
-    if (info.miles) {
-      lines.push(`Miles: ${info.miles}`);
     }
 
     if (info.reference) {

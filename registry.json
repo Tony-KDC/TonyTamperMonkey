@@ -14,8 +14,8 @@
     },
     {
       "name": "DAT One - Gmail Email Load Helper SAFE",
-      "version": "5.2",
-      "description": "Adds a green Email Load button next to the broker's email on DAT load details: opens a Gmail compose to the broker (CC Teamblue@uskoinc.com) with subject 'Load Inquiry - [route]' and auto-inserts the load body (route, pickup date, miles, reference). Gmail side shows a small helper badge.",
+      "version": "5.3",
+      "description": "Adds a green Email Load button next to the broker's email on DAT load details: opens a Gmail compose to the broker (CC Teamblue@uskoinc.com) with subject 'Load Inquiry - [route]' and auto-inserts the load body (route, pickup date, reference — no miles line since v5.3). Gmail side shows a small helper badge.",
       "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20-%20Gmail%20Email%20Load%20Helper%20SAFE.user.js"
     },
     {
