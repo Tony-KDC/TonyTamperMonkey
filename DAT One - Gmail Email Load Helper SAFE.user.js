@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT One - Gmail Email Load Helper SAFE
 // @namespace    http://tampermonkey.net/
-// @version      5.4
-// @description  DAT Email Load button + safer Gmail helper. v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
+// @version      5.5
+// @description  DAT Email Load button + safer Gmail helper. v5.5: more reliable Gmail-side insertion (stable storage key with legacy-key fallback, broader compose editor detection incl. full-page compose and plain-text mode, verified insert). v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
 // @match        https://one.dat.com/*
 // @match        https://mail.google.com/*
 // @grant        GM_setValue
@@ -17,7 +17,16 @@
   'use strict';
 
   const TEAM_CC = 'Teamblue@uskoinc.com';
-  const STORAGE_KEY = 'dat_pending_load_email_v54';
+  // v5.5: ONE stable storage key from now on (it no longer changes with
+  // the version). The old per-version keys are still read as a fallback,
+  // so a DAT tab running an older script version and a Gmail tab running
+  // the new one (or the other way around) still hand the body over.
+  const STORAGE_KEY = 'dat_pending_load_email';
+  const LEGACY_KEYS = [
+    'dat_pending_load_email_v54',
+    'dat_pending_load_email_v53',
+    'dat_pending_load_email_v52'
+  ];
   const BTN_CLASS = 'tm-email-load-btn';
 
   function clean(text) {
@@ -109,10 +118,19 @@
     const info = getLoadInfo(root);
     const email = buildEmail(info);
 
-    await GM_setValue(STORAGE_KEY, {
+    const pending = {
       body: email.body,
       created: Date.now()
-    });
+    };
+
+    // Clear any stale hand-overs, then write the stable key AND the v5.4
+    // key, so a Gmail tab still running v5.4 finds the body too.
+    for (const key of LEGACY_KEYS) {
+      await GM_deleteValue(key);
+    }
+
+    await GM_setValue(STORAGE_KEY, pending);
+    await GM_setValue('dat_pending_load_email_v54', pending);
 
     const gmailUrl =
       'https://mail.google.com/mail/?view=cm&tf=1' +
@@ -207,28 +225,123 @@
 
   // v5.4: the floating "DAT Gmail Helper ON" badge was removed at
   // Anthony's request — it sat in Gmail's bottom-right corner and covered
-  // the reply / "view reply" controls. The helper now works silently:
-  // no on-screen badge or status text at all. Errors still go to console.
+  // the reply / "view reply" controls. The helper works silently:
+  // no on-screen badge or status text at all. Errors go to console.
+  //
+  // v5.5 insertion hardening, after a live failure on 2026-11-16 where a
+  // full-page Gmail compose (mail.google.com/mail/u/0/?tf=cm...) opened
+  // with only the signature and no load info:
+  //  - reads the stable key plus every legacy per-version key, so mixed
+  //    script versions across tabs still hand over;
+  //  - detects more editor shapes: popup compose, full-page compose, and
+  //    plain-text mode (a <textarea>), and no longer requires
+  //    offsetParent (the full-page compose editor can report null);
+  //  - verifies the text actually landed in the editor, with a manual
+  //    DOM-insert fallback when execCommand('insertText') does not take;
+  //  - re-checks for ~15 s after inserting, in case Gmail's own compose
+  //    setup (signature insertion) overwrites the editor afterwards.
+
+  const BODY_MARKER = 'Is this load still available?';
 
   function getVisibleEditors() {
     return Array.from(
       document.querySelectorAll(
         'div[contenteditable="true"][role="textbox"],' +
         'div[contenteditable="true"][aria-label*="Message Body"],' +
-        'div.LW-avf[contenteditable="true"]'
+        'div.LW-avf[contenteditable="true"],' +
+        'div.editable[contenteditable="true"],' +
+        'textarea[name="body"],' +
+        'textarea.Ak'
       )
     ).filter(el => {
       const rect = el.getBoundingClientRect();
 
-      return (
-        el.offsetParent !== null &&
-        rect.width > 150 &&
-        rect.height > 30
-      );
+      return rect.width > 100 && rect.height > 20;
     });
   }
 
+  async function readPending() {
+    for (const key of [STORAGE_KEY, ...LEGACY_KEYS]) {
+      const value = await GM_getValue(key, null);
+
+      if (value?.body) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  async function clearAllPending() {
+    await GM_deleteValue(STORAGE_KEY);
+
+    for (const key of LEGACY_KEYS) {
+      await GM_deleteValue(key);
+    }
+  }
+
+  function editorText(editor) {
+    return editor.tagName === 'TEXTAREA'
+      ? editor.value
+      : (editor.innerText || editor.textContent || '');
+  }
+
+  function insertIntoEditor(editor, body) {
+    const text = body + '\n\n';
+
+    if (editor.tagName === 'TEXTAREA') {
+      editor.value = text + editor.value;
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+      return editorText(editor).includes(BODY_MARKER);
+    }
+
+    editor.focus();
+
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(true);
+
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    let ok = false;
+
+    try {
+      ok = document.execCommand('insertText', false, text);
+    } catch (e) {
+      ok = false;
+    }
+
+    if (!ok || !editorText(editor).includes(BODY_MARKER)) {
+      // Fallback: build the text as DOM nodes at the start of the editor.
+      try {
+        const fragment = document.createDocumentFragment();
+
+        text.split('\n').forEach((line, i, arr) => {
+          fragment.appendChild(document.createTextNode(line));
+          if (i < arr.length - 1) {
+            fragment.appendChild(document.createElement('br'));
+          }
+        });
+
+        const r2 = document.createRange();
+        r2.selectNodeContents(editor);
+        r2.collapse(true);
+        r2.insertNode(fragment);
+
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+      } catch (e) {
+        // Verification below reports the failure.
+      }
+    }
+
+    return editorText(editor).includes(BODY_MARKER);
+  }
+
   let processing = false;
+  let lastInsert = null;
 
   async function tryInsertPendingMessage() {
     if (processing) return;
@@ -236,7 +349,27 @@
     processing = true;
 
     try {
-      const pending = await GM_getValue(STORAGE_KEY, null);
+      // Post-insert watch: if Gmail's compose setup wiped our text
+      // (e.g. signature inserted after us), put it back once or twice.
+      if (
+        lastInsert &&
+        Date.now() - lastInsert.at < 15000 &&
+        lastInsert.count < 3
+      ) {
+        const editors = getVisibleEditors();
+        const stillThere = editors.some(
+          ed => editorText(ed).includes(BODY_MARKER)
+        );
+
+        if (!stillThere && editors.length) {
+          if (insertIntoEditor(editors[editors.length - 1], lastInsert.body)) {
+            lastInsert.count += 1;
+            lastInsert.at = Date.now();
+          }
+        }
+      }
+
+      const pending = await readPending();
 
       if (!pending?.body) {
         return;
@@ -246,7 +379,7 @@
         pending.created &&
         Date.now() - pending.created > 180000
       ) {
-        await GM_deleteValue(STORAGE_KEY);
+        await clearAllPending();
         return;
       }
 
@@ -256,33 +389,18 @@
         return;
       }
 
-      const editor = editors[editors.length - 1];
-
-      if (editor.dataset.datInserted === '1') {
-        await GM_deleteValue(STORAGE_KEY);
+      // Already in a compose (inserted by us, or by an older version):
+      // just clean up the hand-over so it cannot insert twice.
+      if (editors.some(ed => editorText(ed).includes(BODY_MARKER))) {
+        await clearAllPending();
         return;
       }
 
-      editor.focus();
+      const editor = editors[editors.length - 1];
 
-      const range = document.createRange();
-      range.selectNodeContents(editor);
-      range.collapse(true);
-
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-
-      const ok = document.execCommand(
-        'insertText',
-        false,
-        pending.body + '\n\n'
-      );
-
-      if (ok) {
-        editor.dataset.datInserted = '1';
-
-        await GM_deleteValue(STORAGE_KEY);
+      if (insertIntoEditor(editor, pending.body)) {
+        lastInsert = { body: pending.body, at: Date.now(), count: 1 };
+        await clearAllPending();
       }
 
     } catch (err) {
@@ -293,11 +411,11 @@
   }
 
   function startGmail() {
-    setTimeout(tryInsertPendingMessage, 1500);
+    setTimeout(tryInsertPendingMessage, 1200);
 
     setInterval(() => {
       tryInsertPendingMessage();
-    }, 2000);
+    }, 1500);
   }
 
   // =========================
