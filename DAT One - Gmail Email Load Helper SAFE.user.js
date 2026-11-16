@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT One - Gmail Email Load Helper SAFE
 // @namespace    http://tampermonkey.net/
-// @version      5.3
-// @description  DAT Email Load button + safer Gmail helper. v5.3: the email body no longer includes the Miles line.
+// @version      5.4
+// @description  DAT Email Load button + safer Gmail helper. v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
 // @match        https://one.dat.com/*
 // @match        https://mail.google.com/*
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
   'use strict';
 
   const TEAM_CC = 'Teamblue@uskoinc.com';
-  const STORAGE_KEY = 'dat_pending_load_email_v53';
+  const STORAGE_KEY = 'dat_pending_load_email_v54';
   const BTN_CLASS = 'tm-email-load-btn';
 
   function clean(text) {
@@ -205,31 +205,10 @@
   // GMAIL SIDE
   // =========================
 
-  function addBadge(text = 'DAT Gmail Helper ON') {
-    let badge = document.getElementById('dat-gmail-helper-badge');
-
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.id = 'dat-gmail-helper-badge';
-
-      badge.style.cssText = `
-        position:fixed;
-        right:10px;
-        bottom:10px;
-        z-index:2147483647;
-        background:#188038;
-        color:#fff;
-        padding:6px 10px;
-        border-radius:6px;
-        font:700 11px Arial,sans-serif;
-        pointer-events:none;
-      `;
-
-      document.body.appendChild(badge);
-    }
-
-    badge.textContent = text;
-  }
+  // v5.4: the floating "DAT Gmail Helper ON" badge was removed at
+  // Anthony's request — it sat in Gmail's bottom-right corner and covered
+  // the reply / "view reply" controls. The helper now works silently:
+  // no on-screen badge or status text at all. Errors still go to console.
 
   function getVisibleEditors() {
     return Array.from(
@@ -260,7 +239,6 @@
       const pending = await GM_getValue(STORAGE_KEY, null);
 
       if (!pending?.body) {
-        addBadge();
         return;
       }
 
@@ -269,14 +247,12 @@
         Date.now() - pending.created > 180000
       ) {
         await GM_deleteValue(STORAGE_KEY);
-        addBadge('Old DAT message cleared');
         return;
       }
 
       const editors = getVisibleEditors();
 
       if (!editors.length) {
-        addBadge('Waiting for compose');
         return;
       }
 
@@ -284,11 +260,8 @@
 
       if (editor.dataset.datInserted === '1') {
         await GM_deleteValue(STORAGE_KEY);
-        addBadge('DAT Load Added ✓');
         return;
       }
-
-      addBadge('Adding load info...');
 
       editor.focus();
 
@@ -310,23 +283,16 @@
         editor.dataset.datInserted = '1';
 
         await GM_deleteValue(STORAGE_KEY);
-
-        addBadge('DAT Load Added ✓');
-      } else {
-        addBadge('Insert failed');
       }
 
     } catch (err) {
       console.error('[DAT Gmail Helper]', err);
-      addBadge('Helper error');
     } finally {
       processing = false;
     }
   }
 
   function startGmail() {
-    addBadge();
-
     setTimeout(tryInsertPendingMessage, 1500);
 
     setInterval(() => {
