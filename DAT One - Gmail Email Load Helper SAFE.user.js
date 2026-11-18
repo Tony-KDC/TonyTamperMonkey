@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT One - Gmail Email Load Helper SAFE
 // @namespace    http://tampermonkey.net/
-// @version      5.5
-// @description  DAT Email Load button + safer Gmail helper. v5.5: more reliable Gmail-side insertion (stable storage key with legacy-key fallback, broader compose editor detection incl. full-page compose and plain-text mode, verified insert). v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
+// @version      5.6
+// @description  DAT Email Load button + safer Gmail helper. v5.6: fixes runaway body duplication — the hand-over is now claimed exactly once, verification reads textContent (innerText can read empty in Gmail's full-page compose), attempts are bounded, and the re-insert watch is gone. v5.5: stable storage key with legacy-key fallback, broader editor detection. v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
 // @match        https://one.dat.com/*
 // @match        https://mail.google.com/*
 // @grant        GM_setValue
@@ -27,6 +27,7 @@
     'dat_pending_load_email_v53',
     'dat_pending_load_email_v52'
   ];
+  const CLAIM_KEY = 'dat_pending_load_email_claim';
   const BTN_CLASS = 'tm-email-load-btn';
 
   function clean(text) {
@@ -237,11 +238,31 @@
   //    plain-text mode (a <textarea>), and no longer requires
   //    offsetParent (the full-page compose editor can report null);
   //  - verifies the text actually landed in the editor, with a manual
-  //    DOM-insert fallback when execCommand('insertText') does not take;
-  //  - re-checks for ~15 s after inserting, in case Gmail's own compose
-  //    setup (signature insertion) overwrites the editor afterwards.
+  //    DOM-insert fallback when execCommand('insertText') does not take.
+  // v5.6 (below) supersedes the verification and retry approach — see
+  // the anti-duplication note above getVisibleEditors.
 
-  const BODY_MARKER = 'Is this load still available?';
+  // v5.6 anti-duplication design (fixes the runaway duplication Anthony
+  // hit on 2026-11-18, where the body kept pasting itself into the
+  // compose over and over):
+  //  - v5.5 verified inserts by reading the editor's innerText. In
+  //    Gmail's full-page compose that read can come back EMPTY even
+  //    when the text visibly landed, so the script believed the insert
+  //    had failed, kept the pending body, and re-inserted on every tick.
+  //    v5.6 verifies with textContent, which is reliable on any node.
+  //  - The hand-over is CLAIMED exactly once: when a compose editor is
+  //    present in this tab, the script writes a claim and deletes every
+  //    pending key BEFORE inserting, so no tick, tab, or second script
+  //    instance can pick the same body up again.
+  //  - Attempts are bounded (max 3 per claimed body), the target editor
+  //    is marked once inserted, and the v5.5 post-insert re-check watch
+  //    is removed — it was another path to duplicate inserts.
+  //  - The marker check ignores the trailing "?" so editor add-ons that
+  //    adjust punctuation cannot make a landed insert look missing.
+
+  const BODY_MARKER = 'Is this load still available';
+  const CLAIM_TTL_MS = 30000;
+  const MAX_ATTEMPTS = 3;
 
   function getVisibleEditors() {
     return Array.from(
@@ -281,9 +302,12 @@
   }
 
   function editorText(editor) {
+    // textContent, NOT innerText: innerText needs layout and can read
+    // empty for Gmail's compose editor even when it holds text — that
+    // false "empty" is what made v5.5 re-insert forever.
     return editor.tagName === 'TEXTAREA'
       ? editor.value
-      : (editor.innerText || editor.textContent || '');
+      : (editor.textContent || '');
   }
 
   function insertIntoEditor(editor, body) {
@@ -316,6 +340,8 @@
 
     if (!ok || !editorText(editor).includes(BODY_MARKER)) {
       // Fallback: build the text as DOM nodes at the start of the editor.
+      // Runs ONLY when the marker is genuinely absent (checked with
+      // textContent), so it cannot stack a second copy on a good insert.
       try {
         const fragment = document.createDocumentFragment();
 
@@ -341,7 +367,7 @@
   }
 
   let processing = false;
-  let lastInsert = null;
+  let claimed = null;
 
   async function tryInsertPendingMessage() {
     if (processing) return;
@@ -349,37 +375,72 @@
     processing = true;
 
     try {
-      // Post-insert watch: if Gmail's compose setup wiped our text
-      // (e.g. signature inserted after us), put it back once or twice.
-      if (
-        lastInsert &&
-        Date.now() - lastInsert.at < 15000 &&
-        lastInsert.count < 3
-      ) {
-        const editors = getVisibleEditors();
-        const stillThere = editors.some(
-          ed => editorText(ed).includes(BODY_MARKER)
-        );
+      if (!claimed) {
+        const pending = await readPending();
 
-        if (!stillThere && editors.length) {
-          if (insertIntoEditor(editors[editors.length - 1], lastInsert.body)) {
-            lastInsert.count += 1;
-            lastInsert.at = Date.now();
-          }
+        if (!pending?.body) {
+          return;
         }
-      }
 
-      const pending = await readPending();
+        if (
+          pending.created &&
+          Date.now() - pending.created > 180000
+        ) {
+          await clearAllPending();
+          return;
+        }
 
-      if (!pending?.body) {
-        return;
-      }
+        // Only claim when THIS tab actually has a compose editor —
+        // the script also runs in the main Gmail tab, and claiming
+        // there would eat the body the compose tab needs.
+        const editors = getVisibleEditors();
 
-      if (
-        pending.created &&
-        Date.now() - pending.created > 180000
-      ) {
+        if (!editors.length) {
+          return;
+        }
+
+        const editor = editors[editors.length - 1];
+
+        // The body is already in this compose (inserted by an earlier
+        // tick or version): clean up and never touch it again.
+        if (
+          editor.dataset.datLoadInserted === '1' ||
+          editorText(editor).includes(BODY_MARKER)
+        ) {
+          await clearAllPending();
+          claimed = { body: pending.body, created: pending.created, done: true };
+          return;
+        }
+
+        // Another Gmail tab may already be handling this exact body.
+        const claim = await GM_getValue(CLAIM_KEY, null);
+
+        if (
+          claim &&
+          claim.created === pending.created &&
+          Date.now() - claim.ts < CLAIM_TTL_MS
+        ) {
+          return;
+        }
+
+        // Claim it: mark first, then delete every pending key BEFORE
+        // inserting, so nothing can pick this body up a second time.
+        await GM_setValue(CLAIM_KEY, {
+          created: pending.created,
+          ts: Date.now()
+        });
+
+        claimed = {
+          body: pending.body,
+          created: pending.created,
+          attempts: 0,
+          done: false
+        };
+
         await clearAllPending();
+      }
+
+      if (claimed.done) {
         return;
       }
 
@@ -389,18 +450,27 @@
         return;
       }
 
-      // Already in a compose (inserted by us, or by an older version):
-      // just clean up the hand-over so it cannot insert twice.
-      if (editors.some(ed => editorText(ed).includes(BODY_MARKER))) {
-        await clearAllPending();
+      const editor = editors[editors.length - 1];
+
+      if (
+        editor.dataset.datLoadInserted === '1' ||
+        editorText(editor).includes(BODY_MARKER)
+      ) {
+        claimed.done = true;
         return;
       }
 
-      const editor = editors[editors.length - 1];
+      claimed.attempts += 1;
 
-      if (insertIntoEditor(editor, pending.body)) {
-        lastInsert = { body: pending.body, at: Date.now(), count: 1 };
-        await clearAllPending();
+      if (insertIntoEditor(editor, claimed.body)) {
+        editor.dataset.datLoadInserted = '1';
+        claimed.done = true;
+      } else if (claimed.attempts >= MAX_ATTEMPTS) {
+        console.error(
+          '[DAT Gmail Helper] Insert did not land after ' +
+          MAX_ATTEMPTS + ' attempts; giving up on this one.'
+        );
+        claimed.done = true;
       }
 
     } catch (err) {
