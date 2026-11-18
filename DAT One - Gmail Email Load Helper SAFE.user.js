@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT One - Gmail Email Load Helper SAFE
 // @namespace    http://tampermonkey.net/
-// @version      5.6
-// @description  DAT Email Load button + safer Gmail helper. v5.6: fixes runaway body duplication — the hand-over is now claimed exactly once, verification reads textContent (innerText can read empty in Gmail's full-page compose), attempts are bounded, and the re-insert watch is gone. v5.5: stable storage key with legacy-key fallback, broader editor detection. v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
+// @version      5.7
+// @description  DAT Email Load button + safer Gmail helper. v5.7: the insert check no longer hardcodes the body's wording — the presence marker is derived from the actual pending body (its Route line), and each attempt uses one insert method only. v5.6: claim-once hand-over, textContent verification, bounded attempts. v5.5: stable storage key with legacy-key fallback, broader editor detection. v5.4: removed the floating Gmail helper badge. v5.3: the email body no longer includes the Miles line.
 // @match        https://one.dat.com/*
 // @match        https://mail.google.com/*
 // @grant        GM_setValue
@@ -257,10 +257,30 @@
   //  - Attempts are bounded (max 3 per claimed body), the target editor
   //    is marked once inserted, and the v5.5 post-insert re-check watch
   //    is removed — it was another path to duplicate inserts.
-  //  - The marker check ignores the trailing "?" so editor add-ons that
-  //    adjust punctuation cannot make a landed insert look missing.
+  //  - (Superseded in v5.7: the presence marker is derived from the
+  //    pending body itself — see markerFor — not a hardcoded sentence.)
 
-  const BODY_MARKER = 'Is this load still available';
+  // v5.7: NEVER hardcode the body's wording in the checker. v5.6 looked
+  // for the exact sentence "Is this load still available", but a body
+  // with different wording (Anthony's live body reads "Details Please?")
+  // never matched that check — every verification failed and the script
+  // kept re-inserting. The marker is now derived from the pending body
+  // itself: its "Route:" line (unique to the load), falling back to the
+  // body's longest line. Whatever wording a body uses, the check matches
+  // the body that was actually handed over.
+  function markerFor(body) {
+    const lines = String(body || '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    const routeLine = lines.find(line => line.startsWith('Route:'));
+
+    if (routeLine) return routeLine;
+
+    return lines.sort((a, b) => b.length - a.length)[0] || '';
+  }
+
   const CLAIM_TTL_MS = 30000;
   const MAX_ATTEMPTS = 3;
 
@@ -310,60 +330,74 @@
       : (editor.textContent || '');
   }
 
-  function insertIntoEditor(editor, body) {
+  function insertIntoEditor(editor, body, marker, useFallbackFirst) {
     const text = body + '\n\n';
 
     if (editor.tagName === 'TEXTAREA') {
       editor.value = text + editor.value;
       editor.dispatchEvent(new Event('input', { bubbles: true }));
       editor.dispatchEvent(new Event('change', { bubbles: true }));
-      return editorText(editor).includes(BODY_MARKER);
+      return editorText(editor).includes(marker);
     }
 
     editor.focus();
 
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(true);
+    if (!useFallbackFirst) {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(true);
 
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
 
-    let ok = false;
+      let ok = false;
 
-    try {
-      ok = document.execCommand('insertText', false, text);
-    } catch (e) {
-      ok = false;
-    }
-
-    if (!ok || !editorText(editor).includes(BODY_MARKER)) {
-      // Fallback: build the text as DOM nodes at the start of the editor.
-      // Runs ONLY when the marker is genuinely absent (checked with
-      // textContent), so it cannot stack a second copy on a good insert.
       try {
-        const fragment = document.createDocumentFragment();
-
-        text.split('\n').forEach((line, i, arr) => {
-          fragment.appendChild(document.createTextNode(line));
-          if (i < arr.length - 1) {
-            fragment.appendChild(document.createElement('br'));
-          }
-        });
-
-        const r2 = document.createRange();
-        r2.selectNodeContents(editor);
-        r2.collapse(true);
-        r2.insertNode(fragment);
-
-        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        ok = document.execCommand('insertText', false, text);
       } catch (e) {
-        // Verification below reports the failure.
+        ok = false;
+      }
+
+      if (editorText(editor).includes(marker)) {
+        return true;
+      }
+
+      if (ok) {
+        // execCommand said it inserted but the marker is not readable
+        // yet. Gmail can apply the text a beat later — do NOT stack the
+        // fallback on top. Report "not yet"; the next tick checks
+        // presence first and will mark this done without inserting
+        // again. If it truly never landed, the NEXT attempt uses the
+        // fallback method instead (useFallbackFirst).
+        return false;
       }
     }
 
-    return editorText(editor).includes(BODY_MARKER);
+    // Fallback: build the text as DOM nodes at the start of the editor.
+    // Used when execCommand genuinely failed, or on later attempts when
+    // an earlier execCommand "success" never actually landed.
+    try {
+      const fragment = document.createDocumentFragment();
+
+      text.split('\n').forEach((line, i, arr) => {
+        fragment.appendChild(document.createTextNode(line));
+        if (i < arr.length - 1) {
+          fragment.appendChild(document.createElement('br'));
+        }
+      });
+
+      const r2 = document.createRange();
+      r2.selectNodeContents(editor);
+      r2.collapse(true);
+      r2.insertNode(fragment);
+
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch (e) {
+      // Verification below reports the failure.
+    }
+
+    return editorText(editor).includes(marker);
   }
 
   let processing = false;
@@ -405,7 +439,7 @@
         // tick or version): clean up and never touch it again.
         if (
           editor.dataset.datLoadInserted === '1' ||
-          editorText(editor).includes(BODY_MARKER)
+          editorText(editor).includes(markerFor(pending.body))
         ) {
           await clearAllPending();
           claimed = { body: pending.body, created: pending.created, done: true };
@@ -434,6 +468,7 @@
           body: pending.body,
           created: pending.created,
           attempts: 0,
+          lastAttemptAt: 0,
           done: false
         };
 
@@ -454,15 +489,29 @@
 
       if (
         editor.dataset.datLoadInserted === '1' ||
-        editorText(editor).includes(BODY_MARKER)
+        editorText(editor).includes(markerFor(claimed.body))
       ) {
         claimed.done = true;
         return;
       }
 
+      // Space attempts out: the first ticks can fire back-to-back
+      // (initial timeout + interval), and Gmail needs a beat to apply
+      // an insert. Presence is re-checked every tick, but a new insert
+      // attempt happens at most once every ~2.5 s.
+      if (Date.now() - claimed.lastAttemptAt < 2500) {
+        return;
+      }
+
+      claimed.lastAttemptAt = Date.now();
       claimed.attempts += 1;
 
-      if (insertIntoEditor(editor, claimed.body)) {
+      if (insertIntoEditor(
+        editor,
+        claimed.body,
+        markerFor(claimed.body),
+        claimed.attempts >= 2
+      )) {
         editor.dataset.datLoadInserted = '1';
         claimed.done = true;
       } else if (claimed.attempts >= MAX_ATTEMPTS) {
