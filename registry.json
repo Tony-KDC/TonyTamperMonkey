@@ -1,25 +1,25 @@
 {
   "scripts": [
     {
-      "name": "DAT One – City Zip Code Injector",
+      "name": "DAT One \u2013 City Zip Code Injector",
       "version": "3.0",
       "description": "Injects city zip code data into DAT One",
       "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20%E2%80%93%20City%20Zip%20Code%20Injector.user.js"
     },
     {
       "name": "DAT to Apex - MC Checker + Route Tools",
-      "version": "6.3",
+      "version": "6.4",
       "description": "MC checker and route tools between DAT and Apex",
       "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20to%20Apex%20-%20MC%20Checker%20%2B%20Route%20Tools.user.js"
     },
     {
       "name": "DAT One - Gmail Email Load Helper SAFE",
       "version": "5.7",
-      "description": "Adds a green Email Load button next to the broker's email on DAT load details: opens a Gmail compose to the broker (CC Teamblue@uskoinc.com) with subject 'Load Inquiry - [route]' and auto-inserts the load body (route, pickup date, reference — no miles line since v5.3). Gmail side works silently (badge removed in v5.4); v5.5 made insertion reliable in popup and full-page compose incl. plain-text mode, v5.6 added the claim-once hand-over, and v5.7 fixes the remaining duplication cause: the presence check is derived from the actual body (its Route line) instead of a hardcoded sentence, with spaced, single-method attempts.",
+      "description": "Adds a green Email Load button next to the broker's email on DAT load details: opens a Gmail compose to the broker (CC Teamblue@uskoinc.com) with subject 'Load Inquiry - [route]' and auto-inserts the load body (route, pickup date, reference \u2014 no miles line since v5.3). Gmail side works silently (badge removed in v5.4); v5.5 made insertion reliable in popup and full-page compose incl. plain-text mode, v5.6 added the claim-once hand-over, and v5.7 fixes the remaining duplication cause: the presence check is derived from the actual body (its Route line) instead of a hardcoded sentence, with spaced, single-method attempts.",
       "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20-%20Gmail%20Email%20Load%20Helper%20SAFE.user.js"
     },
     {
-      "name": "DAT One – Rate-Per-Mile Badges",
+      "name": "DAT One \u2013 Rate-Per-Mile Badges",
       "version": "1.1",
       "description": "Shows $/mile badges on DAT One loads: loaded $/mi from DAT trip miles (zip estimate as fallback) plus an all-in $/mi with DAT deadhead",
       "downloadURL": "https://raw.githubusercontent.com/Tony-KDC/TonyTamperMonkey/refs/heads/main/DAT%20One%20%E2%80%93%20Rate-Per-Mile%20Badges.user.js"

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DAT to Apex - MC Checker + Route Tools
 // @namespace    http://tampermonkey.net/
-// @version      6.3
-// @description  Adds Copy Route, Maps, and Apex MC check buttons to DAT One. Auto-fills and submits on Apex Dashboard, then paints the DAT button with the Apex verdict read from the results table (OK / RISK / CHECKED). Verdicts older than 24 hours paint as STALE instead of staying green. v6.3: fixed for DAT's new load-details UI, where the MC number now lives in a .compliance-number element with a copy button inside it.
+// @version      6.4
+// @description  Adds Copy Route, Maps, and Apex MC check buttons to DAT One. Auto-fills and submits on Apex Dashboard, then paints the DAT button with the Apex verdict read from the results table (OK / RISK / CHECKED). Verdicts older than 24 hours paint as STALE instead of staying green. v6.4: DAT removed the VIEW ROUTE button and put their own Google Maps link in the Trip header — the Copy Route / Maps buttons now anchor in that header instead (v6.3 fixed the MC button for the .compliance-number UI).
 // @match        https://one.dat.com/*
 // @match        https://amp.apexcapitalcorp.com/*
 // @grant        GM_setClipboard
@@ -228,11 +228,12 @@
         style.textContent = `
             .tm-route-tools-wrap {
                 display: inline-flex !important;
-                flex-direction: column !important;
-                align-items: flex-start !important;
+                flex-direction: row !important;
+                flex-wrap: wrap !important;
+                align-items: center !important;
                 gap: 10px !important;
                 margin-left: 12px !important;
-                vertical-align: top !important;
+                vertical-align: middle !important;
             }
 
             .tm-route-btn {
@@ -312,7 +313,7 @@
     }
 
     // --- Route & Map Functions ---
-    function cleanText(text) { return (text || '').replace(/\s+/g, ' ').replace(/\(\d+\)/g, '').trim(); }
+    function cleanText(text) { return (text || '').replace(/\(\d+\)/g, '').replace(/\s+/g, ' ').trim(); }
 
     function getOriginDestination() {
         const originEl = document.querySelector('[class*="route-origin"] [class*="city"]');
@@ -608,17 +609,44 @@
         });
     }
 
+    // v6.4 — DAT redesigned the load-details Trip header again (Nov 2026):
+    // the VIEW ROUTE button this used to anchor to is GONE (zero matches in
+    // the page), and DAT now renders their own Google Maps link in the
+    // header via a web component:
+    //   <div class="details-header">
+    //     <div class="label">Trip</div>
+    //     <load-details-route-header-actions
+    //        data-test="load-details-route-header-actions">…</…>
+    //   </div>
+    // So the wrap now sits in that same header row, inserted just BEFORE
+    // the header-actions element (with space-between layout that keeps
+    // DAT's own Maps link at the right edge and puts our buttons between
+    // the "Trip" label and it). The page can contain more than one
+    // header-actions element (e.g. a second load's markup), so take the
+    // first VISIBLE one. The old VIEW ROUTE anchor stays as a fallback
+    // for any DAT view that still renders it.
+    function findRouteToolsAnchor() {
+        const all = document.querySelectorAll('[data-test="load-details-route-header-actions"]');
+        for (const el of all) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) return { el, pos: 'beforebegin' };
+        }
+        const viewRouteEl = findViewRouteButton();
+        if (viewRouteEl) return { el: viewRouteEl, pos: 'afterend' };
+        return null;
+    }
+
     function injectRouteButtons() {
         if (document.querySelector('.tm-route-tools-wrap')) return;
-        const viewRouteEl = findViewRouteButton();
-        if (!viewRouteEl) return;
+        const anchor = findRouteToolsAnchor();
+        if (!anchor) return;
 
         const wrap = document.createElement('div');
         wrap.className = 'tm-route-tools-wrap';
         wrap.appendChild(makeCopyButton());
         wrap.appendChild(makeMapsButton());
 
-        viewRouteEl.insertAdjacentElement('afterend', wrap);
+        anchor.el.insertAdjacentElement(anchor.pos, wrap);
     }
 
     function run() {
